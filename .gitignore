@@ -1,5 +1,8 @@
-## Sublime
+## Sublime, and other temporary stuff
 /*.sublime-workspace
+/config.yml
+/test.py
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
