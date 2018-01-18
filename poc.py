@@ -11,6 +11,8 @@ import datetime
 import email, email.utils
 import enum
 import magic
+import io
+import zipfile
 
 CONFIG_DEFAULTS = {
 	"lexofficeInstance": "app.lexoffice.de",
@@ -24,6 +26,10 @@ URLS = {
 
 USER_AGENT = 'GITHUB_COM_HENRYK_LEXOFFICE_BELEGMAIL/43'
 ACCEPTABLE_LIST = ['image/jpeg', 'application/pdf', 'image/png']
+ACCEPTABLE_ZIP = ['application/zip', 'application/x-zip-compressed']
+ACCEPTABLE_OCTET = 'application/octet-stream'
+
+ZIP_RECURSION_LIMIT = 2
 
 logging.basicConfig()
 logging.getLogger().setLevel(logging.DEBUG)
@@ -82,6 +88,7 @@ class ImapReceiver(object):
 
 					finally:
 						if result is PROCESSING_RESULT.UPLOADED:
+							server.add_flags(msgid, [imapclient.SEEN])
 							server.copy(msgid, target_folder)
 							server.delete_messages(msgid)
 							server.expunge()
@@ -110,30 +117,36 @@ class ImapReceiver(object):
 			name, data = None, None
 			logging.info("Have %r", ctype)
 
-			if ctype in ACCEPTABLE_LIST + ['application/octet-stream']:
+			if ctype in ACCEPTABLE_LIST + ACCEPTABLE_ZIP + [ACCEPTABLE_OCTET]:
 				name = part.get_filename()
 				data = part.get_payload(decode=True)
 
-			if ctype == 'application/octet-stream':
+			if ctype == ACCEPTABLE_OCTET:
 				magic_type = magic.from_buffer(data, mime=True)
-				if magic_type in ACCEPTABLE_LIST:
+				if magic_type in ACCEPTABLE_LIST + ACCEPTABLE_ZIP:
 					ctype = magic_type
 				else:
 					data = None
 
 			if data:
-				logging.info("Have attachment %r (%s) of size %s", name, ctype, len(data))
-				self.ensure_login()
-				result = None
-				try:
-					result = self.c.upload_image(name, data, ctype)
-				except:
-					logging.exception("Fehler beim Hochladen des Attachments {0}".format(name))
-					error_count = error_count+1
+				if ctype in ACCEPTABLE_ZIP:
+					part_iter = self.handle_zip(name, ctype, data)
+				else:
+					part_iter = [ (name, ctype, data) ]
 
-				if result:
-					logging.info("Attachment hochgeladen, Ergebnis: {0}".format(result))
-					upload_count = upload_count+1
+				for (name, ctype, data) in part_iter:
+					logging.info("Have attachment %r (%s) of size %s", name, ctype, len(data))
+					self.ensure_login()
+					result = None
+					try:
+						result = self.c.upload_image(name, data, ctype)
+					except:
+						logging.exception("Fehler beim Hochladen des Attachments {0}".format(name))
+						error_count = error_count+1
+
+					if result:
+						logging.info("Attachment hochgeladen, Ergebnis: {0}".format(result))
+						upload_count = upload_count+1
 
 		if error_count > 0:
 			return PROCESSING_RESULT.ERROR
@@ -142,6 +155,26 @@ class ImapReceiver(object):
 			return PROCESSING_RESULT.UPLOADED
 
 		return PROCESSING_RESULT.PROCESSED
+
+	@staticmethod
+	def handle_zip(name, ctype, data, recursion=0):
+		if recursion <= ZIP_RECURSION_LIMIT:
+			zio = io.BytesIO(data)
+			with zipfile.ZipFile(zio) as zfile:
+				for finfo in zfile.infolist():
+					fdata = zfile.read(finfo)
+
+					fctype = magic.from_buffer(fdata, mime=True)
+
+					new_name = "{0}::{1}".format(name, finfo.filename)
+
+					if fctype in ACCEPTABLE_LIST:
+						yield (new_name, fctype, fdata)
+					elif fcype in ACCEPTABLE_ZIP:
+						yield from handle_zip(new_name, fctype, fdata)
+
+
+
 
 	def ensure_login(self):
 		# FIXME Better logic
