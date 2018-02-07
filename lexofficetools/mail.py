@@ -130,8 +130,7 @@ class ImapReceiver(object):
 
 		return PROCESSING_RESULT.PROCESSED
 
-	@staticmethod
-	def handle_zip(name, ctype, data, recursion=0):
+	def handle_zip(self, name, ctype, data, recursion=0):
 		if recursion <= ZIP_RECURSION_LIMIT:
 			zio = io.BytesIO(data)
 			with zipfile.ZipFile(zio) as zfile:
@@ -144,8 +143,8 @@ class ImapReceiver(object):
 
 					if fctype in ACCEPTABLE_LIST:
 						yield (new_name, fctype, fdata)
-					elif fcype in ACCEPTABLE_ZIP:
-						yield from handle_zip(new_name, fctype, fdata)
+					elif fctype in ACCEPTABLE_ZIP:
+						yield from self.handle_zip(new_name, fctype, fdata, recursion+1)
 
 
 
