@@ -6,6 +6,8 @@ import magic
 import io
 import zipfile
 import logging
+from signal import SIGINT, SIGTERM
+from pysigset import suspended_signals
 
 from .lexoffice import RestClient
 
@@ -45,29 +47,31 @@ class ImapReceiver(object):
 			select_info = server.select_folder('INBOX')
 			if select_info[b"EXISTS"]:
 				messages = server.search(['NOT', 'DELETED', 'NOT', 'SEEN'])
-				response = server.fetch(messages, ['RFC822'])
+				
+				with suspended_signals(SIGINT, SIGTERM):
+					response = server.fetch(messages, ['RFC822'])
 
-				for msgid, data in response.items():
-					body = data[b'RFC822']
-					target = None
-					result = PROCESSING_RESULT.ERROR
+					for msgid, data in response.items():
+						body = data[b'RFC822']
+						target = None
+						result = PROCESSING_RESULT.ERROR
 
-					try:
-						message = email.message_from_bytes(body)
+						try:
+							message = email.message_from_bytes(body)
 
-						result = self.handle_mail(message)
+							result = self.handle_mail(message)
 
-					except:
-						self.logger.exception("Fehler beim Bearbeiten der Mail {0}".format(msgid))
+						except:
+							self.logger.exception("Fehler beim Bearbeiten der Mail {0}".format(msgid))
 
-					finally:
-						if result is PROCESSING_RESULT.UPLOADED:
-							server.add_flags(msgid, [imapclient.SEEN])
-							server.copy(msgid, target_folder)
-							server.delete_messages(msgid)
-							server.expunge()
-						elif result in (PROCESSING_RESULT.IGNORE, PROCESSING_RESULT.OTHER):
-							server.remove_flags(msgid, [imapclient.SEEN])
+						finally:
+							if result is PROCESSING_RESULT.UPLOADED:
+								server.add_flags(msgid, [imapclient.SEEN])
+								server.copy(msgid, target_folder)
+								server.delete_messages(msgid)
+								server.expunge()
+							elif result in (PROCESSING_RESULT.IGNORE, PROCESSING_RESULT.OTHER):
+								server.remove_flags(msgid, [imapclient.SEEN])
 
 
 			server.idle()

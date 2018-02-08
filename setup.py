@@ -60,6 +60,7 @@ setup(
         'PyYAML',
         'imapclient',
         'python-magic',
+        'pysigset',
     ],  # Optional
 
     extras_require={},
