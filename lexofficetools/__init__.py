@@ -29,7 +29,7 @@ def main():
 		subprocesses = []
 		for configuration in c.configurations():
 			i = ImapReceiver(configuration)
-			subprocesses.append( multiprocessing.Process(target=i.run) )
+			subprocesses.append( multiprocessing.Process(target=i.run, name="Worker-{0}".format(configuration.name)) )
 
 		for p in subprocesses:
 			p.start()
