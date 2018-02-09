@@ -19,6 +19,9 @@ class Configuration(object):
 	def __getitem__(self, name):
 		return self._config[name]
 
+	def __contains__(self, name):
+		return self._config.__contains__(name)
+
 	def keys(self):
 		return self._config.keys()
 

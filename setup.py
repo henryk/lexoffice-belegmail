@@ -61,6 +61,8 @@ setup(
         'imapclient',
         'python-magic',
         'pysigset',
+        'bs4',
+        'lxml',
     ],  # Optional
 
     extras_require={},

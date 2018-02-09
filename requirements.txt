@@ -3,3 +3,6 @@ PyYAML
 imapclient
 python-magic
 pysigset
+bs4
+lxml
+

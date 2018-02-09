@@ -6,6 +6,7 @@ import pprint
 
 from .config import ConfigurationManager
 from .mail import ImapReceiver
+from .atos_cc import CreditAccountScraper
 
 
 logging.basicConfig()
@@ -16,7 +17,7 @@ requests_log.propagate = True
 
 def main():
 	parser = argparse.ArgumentParser()
-	parser.add_argument('-m', '--mode', choices=["daemon", "debug"], default="daemon", help="Execution mode")
+	parser.add_argument('-m', '--mode', choices=["daemon", "fetch_credit", "debug_config"], default="daemon", help="Execution mode")
 	parser.add_argument('config_yaml', nargs='+', type=argparse.FileType('r'), help="Configuration file(s) in YAML format")
 
 	args = parser.parse_args()
@@ -36,5 +37,12 @@ def main():
 
 		for p in subprocesses:
 			p.join()
+	elif args.mode == "fetch_credit":
+		for configuration in c.configurations():
+			if 'atos_cc' in configuration:
+				for c in configuration['atos_cc']:
+					s = CreditAccountScraper(c)
+					with s.logged_in():
+						pprint.pprint(s.fetch_all())
 	else:
 		pprint.pprint(c.configs)
