@@ -5,7 +5,15 @@ from urllib.parse import urljoin
 import pprint
 
 from bs4 import BeautifulSoup, NavigableString, Comment, Tag
-DBG_counter = []
+
+DBG_counter = None
+def _DBG_out(data):
+	global DBG_counter
+	if DBG_counter is not None:
+		with open('DBG_{0:04d}.txt'.format(DBG_counter), 'w') as fp:
+			fp.write(data)
+		DBG_counter = DBG_counter + 1
+
 
 CREDIT_ENTRY_URLS = {
 	## Some via http://ipv4info.com/domains-in-block/s98ddec/89.106.184.0-89.106.191.255.html
@@ -114,10 +122,8 @@ class ScraperBase(object):
 
 	def navigate(self, url):
 		self.current_page = self.session.get( self.resolve_url(url) )
-		DBG_base = str(len(DBG_counter))
-		DBG_counter.append(0)
-		with open("{0}_out.html".format(DBG_base),"w") as DBG_fp:
-			DBG_fp.write(self.soup.prettify()) 
+		
+		_DBG_out(self.soup.prettify())
 
 	def clear_session(self):
 		self._session = None
@@ -138,10 +144,7 @@ class ScraperBase(object):
 		action = self.resolve_url(form['action'])
 		request_data = {}
 
-		DBG_base = str(len(DBG_counter))
-		DBG_counter.append(0)
-		with open("{0}_in.html".format(DBG_base),"w") as DBG_fp:
-			DBG_fp.write(self.soup.prettify()) 
+		_DBG_out(self.soup.prettify())
 
 		if callable(data):
 			data_callback = data
@@ -185,13 +188,11 @@ class ScraperBase(object):
 			else:
 				postprocess_callback(request_data, form)
 
-		with open("{0}_data.txt".format(DBG_base),"w") as DBG_fp:
-			pprint.pprint(request_data, stream=DBG_fp)
+		_DBG_out(pprint.pformat(request_data))
 
 		self.current_page = self.session.post(action, data=request_data)
 
-		with open("{0}_out.html".format(DBG_base),"w") as DBG_fp:
-			DBG_fp.write(self.soup.prettify()) 
+		_DBG_out(self.soup.prettify())
 
 def simplify_message(element):
 	return ", ".join(
@@ -203,7 +204,7 @@ def simplify_message(element):
 class CreditAccountScraper(ScraperBase, LoggedInMixin):
 
 	def log_in(self):
-		self.navigate( ENTRY_URLS[self.config['bank']] )
+		self.navigate( CREDIT_ENTRY_URLS[self.config['bank']] )
 
 		self.submit_form({'name': 'preLogonForm'}, self.config['auth'], 'bt_LOGON')
 		
@@ -221,8 +222,28 @@ class CreditAccountScraper(ScraperBase, LoggedInMixin):
 			self.navigate(a_logout['href'])
 			self.clear_session()
 
-	def fetch_all(self):
-		print(self.soup.prettify())
+	def enumerate_cards(self):
+		for a_elem in self.soup.find('table', attrs={'id': 'account'}).find_all('a'):
+			if a_elem.get('id', '').startswith('rai-') and a_elem.get('href', None) is not None:
+				yield CardDataScraper(self.config, self, a_elem)
+
+class CardDataScraper(ScraperBase):
+	def __init__(self, configuration, parent, a_elem):
+		super(CardDataScraper, self).__init__(configuration, parent)
+		self._navigated = False
+		self._a_elem = a_elem
+
+	def _ensure_navigation(self):
+		if not self._navigated:
+			self.navigate(self._a_elem['href'])
+			self._navigated = True
+
+	@property
+	def card_no(self):
+		return "".join( "".join( self._a_elem.stripped_strings ).split() )
+
+	def __repr__(self):
+		return "<CardDataScraper(card_no={0!r}>".format(self.card_no)
 
 def last_submit(request_data, form):
 	submit_name = None
@@ -276,8 +297,6 @@ class SparkasseCreditLogin(ScraperBase, LoggedInMixin):
 			self.clear_session()
 
 	def cc_sso(self):
-		self.navigate(self.KREDITKARTE_BASE)
-
 		# Simple way: Select and choose the first form with select field, choose last credit card
 		form = self.soup.body.find('select').find_parent('form')
 		self.submit_form(form, {}, None, [select_first_option, last_submit])
