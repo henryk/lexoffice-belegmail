@@ -3,6 +3,7 @@ import contextlib
 from contextlib import contextmanager
 from urllib.parse import urljoin
 import pprint
+import re
 
 from bs4 import BeautifulSoup, NavigableString, Comment, Tag
 
@@ -38,6 +39,78 @@ CREDIT_ENTRY_URLS = {
 }
 
 class LoginError(Exception): pass
+
+class CardNumber(object):
+	def __init__(self, value):
+		self._value = self.normalize(value)
+
+	@staticmethod
+	def normalize(value):
+		"""Normalizes a (partial) credit card number to a common format.
+		'1234'                -> 'xxxxxxxxxxxx1234'
+		'4277 19xx xxxx 1234' -> '427719xxxxxx1234'
+		'4277*1234'           -> '4277xxxxxxxx1234'
+		'4277x'               -> '4277xxxxxxxxxxxx'
+		"""
+		# Step 1: remove all whitespace
+		value = "".join(value.split())
+
+		# Step 2: split by non-numbers
+		parts = list( re.split(r'[^0-9]+', value) )
+
+		# Step 3: determine the number of padding chars to insert
+		padding = max(0, 16 - len("".join(parts)))
+
+		# Step 4: Assemble list of parts
+		new_parts = []
+		for i,part in enumerate(parts):
+			if i>0 or len(parts) == 1:
+				# Step 4a: Anchor right if only one part
+				new_parts.append(None)
+			new_parts.append(part)
+
+		# Step 5: Count number of filler sequences
+		number_fillers = len([e for e in new_parts if e is None])
+
+		# Step 6: Fill filler sequences with placeholders
+		for i, part in enumerate(new_parts):
+			if part is None:
+				new_parts[i] = (padding//number_fillers)*'x'
+
+		# Step 7: Append additional placeholders to first filler
+		for i,part in enumerate(new_parts):
+			if part == '' or part[0] == 'x':
+				new_parts[i] = part + ( max(0, 16-len("".join(new_parts))) * 'x' )
+				break
+
+		return "".join(new_parts)
+
+	def __str__(self):
+		return self._value
+
+	def __repr__(self):
+		return '{0}({1!r})'.format(self.__class__.__name__, self._value)
+
+	def __eq__(self, other):
+		if isinstance(other, int):
+			other = str(other)
+
+		if isinstance(other, str):
+			return self.__eq__(self.__class__(other))
+		elif isinstance(other, self.__class__):
+			for a,b in zip(self._value, other._value):
+				if not (a == 'x' or b == 'x' or a == b):
+					return False
+			return True
+		else:
+			raise NotImplementedError
+
+	def __lt__(self, other): raise NotImplementedError
+	def __le__(self, other): raise NotImplementedError
+	def __gt__(self, other): raise NotImplementedError
+	def __ge__(self, other): raise NotImplementedError
+
+
 
 class LoggedInMixin(object):
 	@contextmanager
@@ -225,22 +298,25 @@ class CreditAccountScraper(ScraperBase, LoggedInMixin):
 	def enumerate_cards(self):
 		for a_elem in self.soup.find('table', attrs={'id': 'account'}).find_all('a'):
 			if a_elem.get('id', '').startswith('rai-') and a_elem.get('href', None) is not None:
-				yield CardDataScraper(self.config, self, a_elem)
+				scraper = CardDataScraper(self.config, self, a_elem)
+				if 'cards' in self.config:
+					for card_no in self.config['cards']:
+						if scraper.card_no == card_no:
+							yield scraper
+				else:
+					yield scraper
 
 class CardDataScraper(ScraperBase):
 	def __init__(self, configuration, parent, a_elem):
 		super(CardDataScraper, self).__init__(configuration, parent)
 		self._navigated = False
 		self._a_elem = a_elem
+		self.card_no = CardNumber( "".join( self._a_elem.stripped_strings ) )
 
 	def _ensure_navigation(self):
 		if not self._navigated:
 			self.navigate(self._a_elem['href'])
 			self._navigated = True
-
-	@property
-	def card_no(self):
-		return "".join( "".join( self._a_elem.stripped_strings ).split() )
 
 	def __repr__(self):
 		return "<CardDataScraper(card_no={0!r}>".format(self.card_no)
