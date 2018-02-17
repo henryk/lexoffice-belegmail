@@ -46,6 +46,7 @@ def main():
 				with m:
 					for c in m.all_cards():
 						print(c)
+						c.synchronize_csv()
 
 	else:
 		pprint.pprint(c.configs)

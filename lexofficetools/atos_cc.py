@@ -4,6 +4,8 @@ from contextlib import contextmanager
 from urllib.parse import urljoin
 import pprint
 import re
+import csv
+import collections
 
 from bs4 import BeautifulSoup, NavigableString, Comment, Tag
 
@@ -306,6 +308,9 @@ class CreditAccountScraper(ScraperBase, LoggedInMixin):
 				else:
 					yield scraper
 
+TRANSACTION_FIELD_NAMES = ('card_no', 'signed_amount', 'ref', 'rai', 'amount', 'postingSequence', 'postingDate', 'statementId', 'formattedAmount', 'purchaseDate', 'mainDescription', 'additionalDescription', 'foreignCash', 'cid')
+Transaction = collections.namedtuple('Transaction', TRANSACTION_FIELD_NAMES)
+
 class CardDataScraper(ScraperBase):
 	def __init__(self, configuration, parent, a_elem):
 		super(CardDataScraper, self).__init__(configuration, parent)
@@ -320,6 +325,118 @@ class CardDataScraper(ScraperBase):
 
 	def __repr__(self):
 		return "<CardDataScraper(card_no={0!r}>".format(self.card_no)
+
+	def _get_csv_name(self):
+		return "{0}.csv".format(self.card_no)
+
+	def synchronize_csv(self, csv_name=None):
+		if csv_name is None:
+			csv_name = self._get_csv_name()
+
+		have_header = False
+		old_entries = []
+		changed = False
+
+		with open(csv_name, 'a+', newline='') as fp:
+			fp.seek(0)
+			reader = csv.reader(fp)
+			for i, row in enumerate(reader):
+				if i == 0 and row[0] == TRANSACTION_FIELD_NAMES[0]:
+					have_header = True
+					continue
+
+				data = Transaction._make(row)
+				old_entries.append(data)
+
+			writer = csv.writer(fp)
+			if not have_header and len(old_entries) == 0:
+				writer.writerow(TRANSACTION_FIELD_NAMES)
+
+			for transaction in self.get_transactions():
+				matched = False
+
+				# Option A: Match by postingSequence if present
+				if transaction.postingSequence:
+					for entry in old_entries:
+						if Transaction._make(entry).postingSequence == transaction.postingSequence:
+							matched = True
+				
+				# Option B: Date, amount, description
+				else:
+					for entry in old_entries:
+						t = Transaction._make(entry)
+						if t.signed_amount == transaction.signed_amount and \
+							t.purchaseDate == transaction.purchaseDate and \
+							t.mainDescription == transaction.mainDescription and \
+							t.additionalDescription == transaction.additionalDescription:
+							matched = True
+
+				if not matched:
+					writer.writerow(transaction)
+					changed = True
+
+		return changed
+
+	def get_transactions(self):
+		self._ensure_navigation()
+		table = self.soup.find('table', attrs={'id': 'transactions'})
+
+		# Find the tabhead, then the rest of the table
+		tabhead = table.find('tr', class_='tabhead')
+		rows = list(tabhead.find_next_siblings('tr'))
+		i = 0
+		while i < len(rows):
+			if 'tabhead' in rows[i].get('class'):
+				i = i + 1
+				continue
+
+			row_a = rows[i +0]
+			row_b = rows[i +1]
+			i = i + 2
+
+			dataset = {'card_no': str(self.card_no)}
+
+			if row_a.find('td').get('colspan', '') == '3':
+				# Empty row ends list
+				break
+			
+			# Option 1: Find the complaint form in row b which has all data in a neat, described dataset
+			form = row_b.find('form')
+			if form:
+				for field_name in TRANSACTION_FIELD_NAMES:
+					i_elem = form.find('input', attrs={'name': field_name})
+					if i_elem:
+						dataset[field_name] = i_elem.get('value', '').strip()
+
+			# Option 2: parse the table rows
+			else:
+				dataset['postingDate'] = row_a.find_all('td')[0].string.strip()
+				description = row_a.find_all('td')[1].string
+				if '/' in description:
+					dataset['mainDescription'] = description.rsplit('/', 1)[0].strip()
+					dataset['additionalDescription'] = description.rsplit('/', 1)[1].strip()
+				else:
+					dataset['mainDescription'] = description.strip()
+				dataset['amount'] = row_a.find_all('td')[2].nobr.string.strip()
+				dataset['purchaseDate'] = row_b.find_all('td')[0].string.strip()
+				dataset['foreignCash'] = row_b.find_all('td')[1].nobr.string.strip()
+
+			for field_name in TRANSACTION_FIELD_NAMES:
+				dataset.setdefault(field_name, '')
+
+			# Massage the amount: remove suffixed +/- sign and prefix it (defaulting to -)
+			split_amount = dataset['amount'].strip().rsplit(None, 1)
+			if len(split_amount) > 1:
+				sign = '+' if split_amount[1] == '+' else '-'
+			elif len(split_amount) == 1 and len(split_amount[0]) > 0 and split_amount[0][0] not in ('-', '+'):
+				sign = '-'
+			else:
+				sign = ''
+			dataset['signed_amount'] = sign+split_amount[0]
+
+			yield Transaction(**dataset)
+
+
 
 def last_submit(request_data, form):
 	submit_name = None
@@ -362,7 +479,7 @@ class SparkasseCreditLogin(ScraperBase, LoggedInMixin):
 
 		self.submit_form({'autocomplete': 'off'}, authid_pin_filler(self.config['auth']), None, last_submit)
 
-		error_div = self.soup.body.find('div', attrs={'class': 'msgerror'})
+		error_div = self.soup.body.find('div', class_='msgerror')
 		if error_div:
 			raise LoginError(simplify_message(error_div))
 
