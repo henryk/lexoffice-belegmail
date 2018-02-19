@@ -9,7 +9,7 @@ import logging
 from signal import SIGINT, SIGTERM
 from pysigset import suspended_signals
 
-from .lexoffice import RestClient
+from .lexoffice import RestClientUser
 
 ACCEPTABLE_LIST = ['image/jpeg', 'application/pdf', 'image/png']
 ACCEPTABLE_ZIP = ['application/zip', 'application/x-zip-compressed']
@@ -24,10 +24,9 @@ class PROCESSING_RESULT(enum.Enum):
 	PROCESSED = 3
 	OTHER = 4
 
-class ImapReceiver(object):
+class ImapReceiver(RestClientUser):
 	def __init__(self, configuration):
-		self.c = None
-		self.config = configuration
+		super(ImapReceiver, self).__init__(configuration)
 		self.logger = logging.getLogger('lexofficetools.mail[{0}]'.format(configuration.name))
 
 	def run(self):
@@ -152,12 +151,6 @@ class ImapReceiver(object):
 
 
 
-
-	def ensure_login(self):
-		# FIXME Better logic
-		if not self.c:
-			self.c = RestClient(self.config)
-			self.c.login()
 
 	def check_access(self, message):
 		senders = message.get_all('from', [])

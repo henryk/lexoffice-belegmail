@@ -7,6 +7,8 @@ import pprint
 from .config import ConfigurationManager
 from .mail import ImapReceiver
 from .atos_cc import CreditScraperManager
+from .cc_sync import FinancialAccountManager
+from .lexoffice import RestClient
 
 
 logging.basicConfig()
@@ -18,7 +20,7 @@ logging.getLogger("chardet.charsetprober").setLevel(logging.WARNING)
 
 def main():
 	parser = argparse.ArgumentParser()
-	parser.add_argument('-m', '--mode', choices=["daemon", "fetch_credit", "debug_config"], default="daemon", help="Execution mode")
+	parser.add_argument('-m', '--mode', choices=["daemon", "fetch_credit", "fetch_transactions", "debug_config"], default="daemon", help="Execution mode")
 	parser.add_argument('config_yaml', nargs='+', type=argparse.FileType('r'), help="Configuration file(s) in YAML format")
 
 	args = parser.parse_args()
@@ -47,6 +49,13 @@ def main():
 					for c in m.all_cards():
 						print(c)
 						c.synchronize_csv()
+
+	elif args.mode == "fetch_transactions":
+		for configuration in c.configurations():
+			m = FinancialAccountManager(configuration)
+			for account in m.all_accounts():
+				print(account)
+				pprint.pprint(m.c.get_financial_transactions(financial_account_id=account.financial_account_id))
 
 	else:
 		pprint.pprint(c.configs)

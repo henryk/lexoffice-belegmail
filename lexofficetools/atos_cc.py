@@ -6,6 +6,7 @@ import pprint
 import re
 import csv
 import collections
+from datetime import datetime, timezone
 
 from bs4 import BeautifulSoup, NavigableString, Comment, Tag
 
@@ -308,7 +309,7 @@ class CreditAccountScraper(ScraperBase, LoggedInMixin):
 				else:
 					yield scraper
 
-TRANSACTION_FIELD_NAMES = ('card_no', 'signed_amount', 'ref', 'rai', 'amount', 'postingSequence', 'postingDate', 'statementId', 'formattedAmount', 'purchaseDate', 'mainDescription', 'additionalDescription', 'foreignCash', 'cid')
+TRANSACTION_FIELD_NAMES = ('card_no', 'signed_amount', 'ref', 'rai', 'amount', 'postingSequence', 'postingDate', 'statementId', 'formattedAmount', 'purchaseDate', 'mainDescription', 'additionalDescription', 'foreignCash', 'cid', 'added_on')
 Transaction = collections.namedtuple('Transaction', TRANSACTION_FIELD_NAMES)
 
 class CardDataScraper(ScraperBase):
@@ -433,6 +434,8 @@ class CardDataScraper(ScraperBase):
 			else:
 				sign = ''
 			dataset['signed_amount'] = sign+split_amount[0]
+
+			dataset['added_on'] = datetime.now(timezone.utc).isoformat()
 
 			yield Transaction(**dataset)
 
