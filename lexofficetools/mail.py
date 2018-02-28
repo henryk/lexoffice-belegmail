@@ -8,6 +8,7 @@ import zipfile
 import logging
 from signal import SIGINT, SIGTERM
 from pysigset import suspended_signals
+from email.header import decode_header
 
 from .lexoffice import RestClientUser
 
@@ -23,6 +24,15 @@ class PROCESSING_RESULT(enum.Enum):
 	IGNORE = 2
 	PROCESSED = 3
 	OTHER = 4
+
+def decode_header_value(data):
+	result = []
+	for text, encoding in decode_header(data):
+		if hasattr(text, 'decode'):
+			result.append(text.decode(encoding or 'us-ascii'))
+		else:
+			result.append(text)
+	return "".join(result)
 
 class ImapReceiver(RestClientUser):
 	def __init__(self, configuration):
@@ -95,7 +105,7 @@ class ImapReceiver(RestClientUser):
 			self.logger.info("Have %r", ctype)
 
 			if ctype in ACCEPTABLE_LIST + ACCEPTABLE_ZIP + [ACCEPTABLE_OCTET]:
-				name = part.get_filename()
+				name = decode_header_value( part.get_filename() )
 				data = part.get_payload(decode=True)
 
 			if ctype == ACCEPTABLE_OCTET:
