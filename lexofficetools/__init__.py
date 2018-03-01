@@ -20,7 +20,7 @@ logging.getLogger("chardet.charsetprober").setLevel(logging.WARNING)
 
 def main():
 	parser = argparse.ArgumentParser()
-	parser.add_argument('-m', '--mode', choices=["daemon", "fetch_credit", "fetch_transactions", "debug_config"], default="daemon", help="Execution mode")
+	parser.add_argument('-m', '--mode', choices=["daemon", "fetch_credit", "fetch_transactions", "sync_credit", "debug_config"], default="daemon", help="Execution mode")
 	parser.add_argument('config_yaml', nargs='+', type=argparse.FileType('r'), help="Configuration file(s) in YAML format")
 
 	args = parser.parse_args()
@@ -43,7 +43,7 @@ def main():
 
 	elif args.mode == "fetch_credit":
 		for configuration in c.configurations():
-			if 'atos_cc' in configuration:
+			if 'cc' in configuration:
 				m = CreditScraperManager(configuration)
 				with m:
 					for c in m.all_cards():
@@ -53,9 +53,31 @@ def main():
 	elif args.mode == "fetch_transactions":
 		for configuration in c.configurations():
 			m = FinancialAccountManager(configuration)
+			m.fetch_accounts()
 			for account in m.all_accounts():
 				print(account)
-				pprint.pprint(m.c.get_financial_transactions(financial_account_id=account.financial_account_id))
+				if account.financial_account_id:
+					pprint.pprint(m.c.get_financial_transactions(financial_account_id=account.financial_account_id))
+
+	elif args.mode == "sync_credit":
+		for configuration in c.configurations():
+			if 'cc' in configuration:
+				f = FinancialAccountManager(configuration)
+				f.fetch_accounts()
+
+				m = CreditScraperManager(configuration)
+				with m:
+					for c in m.all_cards():
+						account = f.get(c.card_no, None)
+						if account is not None:
+							account.update(card_no=c.card_no)
+
+						c.synchronize_csv()
+
+				for account in f.all_accounts():
+					if account.type_ == 'creditcard' and account.card_no is not None:
+						transactions = list( m.get_transactions(account.card_no) )
+						f.sync_credit_transactions(account, transactions)
 
 	else:
 		pprint.pprint(c.configs)

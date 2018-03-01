@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 
 from bs4 import BeautifulSoup, NavigableString, Comment, Tag
 
+from .utils import CardNumber, LoginError
+
 DBG_counter = None
 def _DBG_out(data):
 	global DBG_counter
@@ -17,6 +19,12 @@ def _DBG_out(data):
 		with open('DBG_{0:04d}.txt'.format(DBG_counter), 'w') as fp:
 			fp.write(data)
 		DBG_counter = DBG_counter + 1
+
+TRANSACTION_FIELD_NAMES = ('card_no', 'signed_amount', 'ref', 'rai', 'amount', 'postingSequence', 'postingDate', 'statementId', 'formattedAmount', 'purchaseDate', 'mainDescription', 'additionalDescription', 'foreignCash', 'cid', 'added_on')
+Transaction = collections.namedtuple('Transaction', TRANSACTION_FIELD_NAMES)
+
+def _get_csv_name(card_no):
+	return "{0}.csv".format(card_no)
 
 
 CREDIT_ENTRY_URLS = {
@@ -40,79 +48,6 @@ CREDIT_ENTRY_URLS = {
 	# Postbank
 	'postbank': 'https://kreditkarten.postbank.de/cas/dispatch.do?bt_PRELON=1&ref=1300&service=MASTER',
 }
-
-class LoginError(Exception): pass
-
-class CardNumber(object):
-	def __init__(self, value):
-		self._value = self.normalize(value)
-
-	@staticmethod
-	def normalize(value):
-		"""Normalizes a (partial) credit card number to a common format.
-		'1234'                -> 'xxxxxxxxxxxx1234'
-		'4277 19xx xxxx 1234' -> '427719xxxxxx1234'
-		'4277*1234'           -> '4277xxxxxxxx1234'
-		'4277x'               -> '4277xxxxxxxxxxxx'
-		"""
-		# Step 1: remove all whitespace
-		value = "".join(value.split())
-
-		# Step 2: split by non-numbers
-		parts = list( re.split(r'[^0-9]+', value) )
-
-		# Step 3: determine the number of padding chars to insert
-		padding = max(0, 16 - len("".join(parts)))
-
-		# Step 4: Assemble list of parts
-		new_parts = []
-		for i,part in enumerate(parts):
-			if i>0 or len(parts) == 1:
-				# Step 4a: Anchor right if only one part
-				new_parts.append(None)
-			new_parts.append(part)
-
-		# Step 5: Count number of filler sequences
-		number_fillers = len([e for e in new_parts if e is None])
-
-		# Step 6: Fill filler sequences with placeholders
-		for i, part in enumerate(new_parts):
-			if part is None:
-				new_parts[i] = (padding//number_fillers)*'x'
-
-		# Step 7: Append additional placeholders to first filler
-		for i,part in enumerate(new_parts):
-			if part == '' or part[0] == 'x':
-				new_parts[i] = part + ( max(0, 16-len("".join(new_parts))) * 'x' )
-				break
-
-		return "".join(new_parts)
-
-	def __str__(self):
-		return self._value
-
-	def __repr__(self):
-		return '{0}({1!r})'.format(self.__class__.__name__, self._value)
-
-	def __eq__(self, other):
-		if isinstance(other, int):
-			other = str(other)
-
-		if isinstance(other, str):
-			return self.__eq__(self.__class__(other))
-		elif isinstance(other, self.__class__):
-			for a,b in zip(self._value, other._value):
-				if not (a == 'x' or b == 'x' or a == b):
-					return False
-			return True
-		else:
-			raise NotImplementedError
-
-	def __lt__(self, other): raise NotImplementedError
-	def __le__(self, other): raise NotImplementedError
-	def __gt__(self, other): raise NotImplementedError
-	def __ge__(self, other): raise NotImplementedError
-
 
 
 class LoggedInMixin(object):
@@ -159,7 +94,7 @@ class CreditScraperManager(object):
 		if self.login_stack is None:
 			raise Exception("Must enter CreditScraperManager context first")
 
-		for c in self.config['atos_cc']: ## FIXME Card filter
+		for c in self.config['cc']: ## FIXME Card filter, module: param
 			if 'sso' in c:
 				if c['sso'] == 'bspk':
 					outer = SparkasseCreditLogin(c)
@@ -175,6 +110,21 @@ class CreditScraperManager(object):
 				self._login_push(s)
 				yield from s.enumerate_cards()
 				self._logout_pop()
+
+	def get_transactions(self, card_no):
+		card_no = CardNumber.coerce(card_no)
+		csv_name = _get_csv_name(card_no)
+		entries = []
+
+		with open(csv_name, 'r', newline='') as fp:
+			reader = csv.reader(fp)
+			for i, row in enumerate(reader):
+				if i == 0 and row[0] == TRANSACTION_FIELD_NAMES[0]:
+					continue
+
+				data = Transaction._make(row)
+				yield data
+
 
 class ScraperBase(object):
 	def __init__(self, configuration, parent=None):
@@ -309,9 +259,6 @@ class CreditAccountScraper(ScraperBase, LoggedInMixin):
 				else:
 					yield scraper
 
-TRANSACTION_FIELD_NAMES = ('card_no', 'signed_amount', 'ref', 'rai', 'amount', 'postingSequence', 'postingDate', 'statementId', 'formattedAmount', 'purchaseDate', 'mainDescription', 'additionalDescription', 'foreignCash', 'cid', 'added_on')
-Transaction = collections.namedtuple('Transaction', TRANSACTION_FIELD_NAMES)
-
 class CardDataScraper(ScraperBase):
 	def __init__(self, configuration, parent, a_elem):
 		super(CardDataScraper, self).__init__(configuration, parent)
@@ -327,12 +274,9 @@ class CardDataScraper(ScraperBase):
 	def __repr__(self):
 		return "<CardDataScraper(card_no={0!r}>".format(self.card_no)
 
-	def _get_csv_name(self):
-		return "{0}.csv".format(self.card_no)
-
 	def synchronize_csv(self, csv_name=None):
 		if csv_name is None:
-			csv_name = self._get_csv_name()
+			csv_name = _get_csv_name(self.card_no)
 
 		have_header = False
 		old_entries = []
