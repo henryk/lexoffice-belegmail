@@ -326,6 +326,9 @@ class CardDataScraper(ScraperBase):
 		self._ensure_navigation()
 		table = self.soup.find('table', attrs={'id': 'transactions'})
 
+		if not table:
+			return
+
 		# Find the tabhead, then the rest of the table
 		tabhead = table.find('tr', class_='tabhead')
 		rows = list(tabhead.find_next_siblings('tr'))
