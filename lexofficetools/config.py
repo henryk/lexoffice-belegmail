@@ -51,7 +51,7 @@ class ConfigurationManager(object):
 
 		for cfg in config:
 			if not 'name' in cfg or not 'config' in cfg:
-				raise ConfigParseError('Konfiguratio muss eine Liste von Dictionaries mit den Schlüsseln "name" und "config" sein.')
+				raise ConfigParseError('Konfiguration muss eine Liste von Dictionaries mit den Schlüsseln "name" und "config" sein.')
 
 			self.configs[cfg['name']] = dict(CONFIG_DEFAULTS)
 			self.configs[cfg['name']].update(cfg['config'])

@@ -1,4 +1,13 @@
 import re
+import datetime
+
+def normalize_date_TTMMJJJJ(data):
+	data = "".join(data.split())
+	if not data:
+		return ""
+
+	date = datetime.datetime.strptime(data, '%d.%m.%Y')
+	return date.strftime('%Y-%m-%d')
 
 class LoginError(Exception): pass
 

@@ -3,6 +3,7 @@
 /config.yml
 /test.py
 /DBG_*.txt
+/Dokumente
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

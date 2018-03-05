@@ -1,16 +1,18 @@
 import requests
 import contextlib
 from contextlib import contextmanager
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, parse_qs, urlencode, urlunparse
 import pprint
 import re
 import csv
 import collections
 from datetime import datetime, timezone
+import os, os.path
+
 
 from bs4 import BeautifulSoup, NavigableString, Comment, Tag
 
-from .utils import CardNumber, LoginError
+from .utils import CardNumber, LoginError, normalize_date_TTMMJJJJ
 
 DBG_counter = None
 def _DBG_out(data):
@@ -23,8 +25,13 @@ def _DBG_out(data):
 TRANSACTION_FIELD_NAMES = ('card_no', 'signed_amount', 'ref', 'rai', 'amount', 'postingSequence', 'postingDate', 'statementId', 'formattedAmount', 'purchaseDate', 'mainDescription', 'additionalDescription', 'foreignCash', 'cid', 'added_on')
 Transaction = collections.namedtuple('Transaction', TRANSACTION_FIELD_NAMES)
 
-def _get_csv_name(card_no):
-	return "{0}.csv".format(card_no)
+Statement = collections.namedtuple('Statement', ['date', 'form', 'first_access', 'have_csv'])
+
+DOCUMENT_DIRECTORY = "Dokumente"
+CARD_DIRECTORY = "{card_no}"
+CARD_CSV = "{card_no}.csv"
+CARD_STATEMENT_CSV = "{card_no}_{date}_Kreditkartenabrechnung.csv"
+CARD_STATEMENT_PDF = "{card_no}_{date}_Kreditkartenabrechnung.pdf"
 
 
 CREDIT_ENTRY_URLS = {
@@ -113,7 +120,7 @@ class CreditScraperManager(object):
 
 	def get_transactions(self, card_no):
 		card_no = CardNumber.coerce(card_no)
-		csv_name = _get_csv_name(card_no)
+		csv_name = os.path.join(DOCUMENT_DIRECTORY, CARD_DIRECTORY, CARD_CSV).format(card_no=card_no)
 		entries = []
 
 		with open(csv_name, 'r', newline='') as fp:
@@ -262,21 +269,54 @@ class CreditAccountScraper(ScraperBase, LoggedInMixin):
 class CardDataScraper(ScraperBase):
 	def __init__(self, configuration, parent, a_elem):
 		super(CardDataScraper, self).__init__(configuration, parent)
-		self._navigated = False
 		self._a_elem = a_elem
 		self.card_no = CardNumber( "".join( self._a_elem.stripped_strings ) )
 
-	def _ensure_navigation(self):
-		if not self._navigated:
-			self.navigate(self._a_elem['href'])
-			self._navigated = True
+	def navigate_bt(self, action):
+		parts = urlparse(self._a_elem['href'])
+		query = parse_qs( parts.query )
+
+		query.pop('inquiryType', None)
+		for name in list(query.keys()):
+			if name.startswith('bt_'):
+				query.pop(name, None)
+
+		query['bt_{0}'.format(action)] = ['do']
+
+		new_parts = list(parts)
+		new_parts[4] = urlencode(query, doseq=True)
+
+		self.navigate(urlunparse(new_parts))
 
 	def __repr__(self):
 		return "<CardDataScraper(card_no={0!r}>".format(self.card_no)
 
+	@staticmethod
+	def match_transaction(transaction, old_entries):
+		# Option A: Match by postingSequence if present
+		if transaction.postingSequence:
+			for entry in old_entries:
+				if Transaction._make(entry).postingSequence == transaction.postingSequence:
+					return True
+
+		# Option B: Date, amount, description
+		else:
+			for entry in old_entries:
+				t = Transaction._make(entry)
+				if t.signed_amount == transaction.signed_amount and \
+					t.purchaseDate == transaction.purchaseDate and \
+					t.mainDescription == transaction.mainDescription and \
+					t.additionalDescription == transaction.additionalDescription:
+					return True
+
+		return False
+
+
 	def synchronize_csv(self, csv_name=None):
 		if csv_name is None:
-			csv_name = _get_csv_name(self.card_no)
+			csv_name = os.path.join(DOCUMENT_DIRECTORY, CARD_DIRECTORY, CARD_CSV).format(card_no=self.card_no)
+
+		os.makedirs(os.path.dirname(csv_name), exist_ok=True)
 
 		have_header = False
 		old_entries = []
@@ -297,44 +337,46 @@ class CardDataScraper(ScraperBase):
 			if not have_header and len(old_entries) == 0:
 				writer.writerow(TRANSACTION_FIELD_NAMES)
 
+			for statement in self.get_statement_links():
+				if not statement.have_csv:
+					for transaction in self.get_transactions(statement.form):
+						if not self.match_transaction(transaction, old_entries):
+							writer.writerow(transaction)
+							old_entries.append(transaction)
+							changed = True
+					self.download_statement_csv(statement)
+
 			for transaction in self.get_transactions():
-				matched = False
-
-				# Option A: Match by postingSequence if present
-				if transaction.postingSequence:
-					for entry in old_entries:
-						if Transaction._make(entry).postingSequence == transaction.postingSequence:
-							matched = True
-				
-				# Option B: Date, amount, description
-				else:
-					for entry in old_entries:
-						t = Transaction._make(entry)
-						if t.signed_amount == transaction.signed_amount and \
-							t.purchaseDate == transaction.purchaseDate and \
-							t.mainDescription == transaction.mainDescription and \
-							t.additionalDescription == transaction.additionalDescription:
-							matched = True
-
-				if not matched:
+				if not self.match_transaction(transaction, old_entries):
 					writer.writerow(transaction)
+					old_entries.append(transaction)
 					changed = True
 
 		return changed
 
-	def get_transactions(self):
-		self._ensure_navigation()
-		table = self.soup.find('table', attrs={'id': 'transactions'})
+	def get_transactions(self, statement_form=None):
+		if statement_form is None:
+			self.navigate_bt('TXN')
+			table = self.soup.find('table', attrs={'id': 'transactions'})
 
-		if not table:
-			return
+			if not table:
+				return
 
-		# Find the tabhead, then the rest of the table
-		tabhead = table.find('tr', class_='tabhead')
-		rows = list(tabhead.find_next_siblings('tr'))
+			# Find the tabhead, then the rest of the table
+			tabhead = table.find('tr', class_='tabhead')
+			rows = list(tabhead.find_next_siblings('tr'))
+		else:
+			self.submit_form(statement_form, {}, 'bt_STMT')
+
+			form = self.soup.find('form', attrs={'name': 'dispatchForm'})
+			if not form:
+				return
+			tabhead = form.find_parent('tr').find_previous_sibling('tr').find_previous_sibling('tr')
+			rows = list(tabhead.find_next_siblings('tr'))
+
 		i = 0
 		while i < len(rows):
-			if 'tabhead' in rows[i].get('class'):
+			if 'tabhead' in rows[i].get('class', []):
 				i = i + 1
 				continue
 
@@ -365,7 +407,7 @@ class CardDataScraper(ScraperBase):
 					dataset['additionalDescription'] = description.rsplit('/', 1)[1].strip()
 				else:
 					dataset['mainDescription'] = description.strip()
-				dataset['amount'] = row_a.find_all('td')[2].nobr.string.strip()
+				dataset['amount'] = " ".join( row_a.find_all('td')[2].nobr.string.split() )
 				dataset['purchaseDate'] = row_b.find_all('td')[0].string.strip()
 				dataset['foreignCash'] = row_b.find_all('td')[1].nobr.string.strip()
 
@@ -386,6 +428,48 @@ class CardDataScraper(ScraperBase):
 
 			yield Transaction(**dataset)
 
+	def get_statement_links(self):
+		self.navigate_bt('STMTLIST')
+
+		table = self.soup.find('table', attrs={'id': 'bills'})
+		if not table:
+			return
+
+		for form in table.find_all('form'):
+			button_link = form.find('input', attrs={'name': 'bt_STMT'})
+			if not button_link:
+				continue
+
+			first_access_td = form.find_parent('td').find_next_sibling('td')
+			if first_access_td:
+				first_access = " ".join(first_access_td.stripped_strings)
+			else:
+				first_access = ""
+
+			date = normalize_date_TTMMJJJJ(button_link['value'])
+			if os.path.exists(os.path.join(DOCUMENT_DIRECTORY, CARD_DIRECTORY, CARD_STATEMENT_CSV)\
+					.format(card_no=self.card_no, date=date) ):
+				have_csv = True
+			else:
+				have_csv = False
+
+			yield Statement(date, form, normalize_date_TTMMJJJJ(first_access), have_csv)
+
+	def download_statement_csv(self, statement):
+		self.submit_form(statement.form, {}, 'bt_STMT')
+
+		form = self.soup.find('input', attrs={'name': 'bt_STMTSAVE'}).find_parent('form')
+		self.submit_form(form, {}, 'bt_STMTSAVE')
+
+		for a in self.soup.find_all('a'):
+			if 'bt_STMTCSV' in a.get('href', ''):
+				CSV_RESPONSE = self.session.get( self.resolve_url(a['href']) )
+
+				csv_name = os.path.join(DOCUMENT_DIRECTORY, CARD_DIRECTORY, CARD_STATEMENT_CSV)\
+					.format(card_no=self.card_no, date=statement.date)
+
+				with open(csv_name, 'w') as fp:
+					fp.write(CSV_RESPONSE.text)
 
 
 def last_submit(request_data, form):
