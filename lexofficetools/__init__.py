@@ -76,8 +76,7 @@ def main():
 
 				for account in f.all_accounts():
 					if account.type_ == 'creditcard' and account.card_no is not None:
-						transactions = list( m.get_transactions(account.card_no) )
-						f.sync_credit_transactions(account, transactions)
+						f.sync_credit_transactions(account, m.get_transactions(account.card_no))
 
 	else:
 		pprint.pprint(c.configs)

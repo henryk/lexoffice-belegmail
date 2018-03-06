@@ -1,6 +1,7 @@
 
 from .lexoffice import RestClientUser
-from .utils import CardNumber
+from .utils import CardNumber, symmetric_difference
+import pprint
 
 def rename(d):
 	mapping={"type": "type_", "financialAccountId": "financial_account_id"}
@@ -109,4 +110,30 @@ class FinancialAccountManager(RestClientUser):
 			return default
 
 	def sync_credit_transactions(self, account, transactions):
-		print(transactions)
+		old_transactions = self.c.get_financial_transactions(financial_account_id=account.financial_account_id)
+
+		def transform_a(item):
+			return  (item.purchaseDate, item.signed_amount, item.mainDescription, item.additionalDescription)
+
+		def transform_b(item):
+			if '/' in item['purpose']:
+				description_a = item['purpose'].rsplit('/', 1)[0].strip()
+				description_b = item['purpose'].rsplit('/', 1)[1].strip()
+			else:
+				description_a = item['purpose'].strip()
+				description_b = ''
+
+			amount = "{0:+.2f}".format( item['amount'] ).replace('.', ',')
+
+			date = item['dateLocalized'] # FIXME
+
+			return (date, amount, description_a, description_b)
+
+		missing, old = symmetric_difference(transactions, old_transactions, transform_a=transform_a, transform_b=transform_b)
+
+		print("======== NEW TRANSACTIONS =======")
+		pprint.pprint(missing)
+
+		print("======== OLD TRANSACTIONS =======")
+		pprint.pprint(old)
+

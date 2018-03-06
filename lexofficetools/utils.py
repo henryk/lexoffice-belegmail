@@ -1,5 +1,6 @@
 import re
 import datetime
+import collections
 
 def normalize_date_TTMMJJJJ(data):
 	data = "".join(data.split())
