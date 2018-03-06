@@ -12,7 +12,7 @@ import os, os.path
 
 from bs4 import BeautifulSoup, NavigableString, Comment, Tag
 
-from .utils import CardNumber, LoginError, normalize_date_TTMMJJJJ
+from .utils import CardNumber, LoginError, normalize_date_TTMMJJJJ, symmetric_difference
 
 DBG_counter = None
 def _DBG_out(data):
@@ -55,6 +55,13 @@ CREDIT_ENTRY_URLS = {
 	# Postbank
 	'postbank': 'https://kreditkarten.postbank.de/cas/dispatch.do?bt_PRELON=1&ref=1300&service=MASTER',
 }
+
+
+def map_transaction_equiv(item):
+	if item.postingSequence:
+		return (1, item.postingSequence)
+	else:
+		return (2, item.signed_amount, item.purchaseDate, item.mainDescription, item.additionalDescription)
 
 
 class LoggedInMixin(object):
@@ -291,26 +298,6 @@ class CardDataScraper(ScraperBase):
 	def __repr__(self):
 		return "<CardDataScraper(card_no={0!r}>".format(self.card_no)
 
-	@staticmethod
-	def match_transaction(transaction, old_entries):
-		# Option A: Match by postingSequence if present
-		if transaction.postingSequence:
-			for entry in old_entries:
-				if Transaction._make(entry).postingSequence == transaction.postingSequence:
-					return True
-
-		# Option B: Date, amount, description
-		else:
-			for entry in old_entries:
-				t = Transaction._make(entry)
-				if t.signed_amount == transaction.signed_amount and \
-					t.purchaseDate == transaction.purchaseDate and \
-					t.mainDescription == transaction.mainDescription and \
-					t.additionalDescription == transaction.additionalDescription:
-					return True
-
-		return False
-
 
 	def synchronize_csv(self, csv_name=None):
 		if csv_name is None:
@@ -339,18 +326,20 @@ class CardDataScraper(ScraperBase):
 
 			for statement in self.get_statement_links():
 				if not statement.have_csv:
-					for transaction in self.get_transactions(statement.form):
-						if not self.match_transaction(transaction, old_entries):
-							writer.writerow(transaction)
-							old_entries.append(transaction)
-							changed = True
+					new_entries = self.get_transactions(statement.form)
+					missing, expired = symmetric_difference(new_entries, old_entries, map_to_equiv=map_transaction_equiv, transform_b=Transaction._make )
+					for transaction in missing:
+						writer.writerow(transaction)
+						old_entries.append(transaction)
+						changed = True
 					self.download_statement_csv(statement)
 
-			for transaction in self.get_transactions():
-				if not self.match_transaction(transaction, old_entries):
-					writer.writerow(transaction)
-					old_entries.append(transaction)
-					changed = True
+			new_entries = self.get_transactions()
+			missing, expired = symmetric_difference(new_entries, old_entries, map_to_equiv=map_transaction_equiv, transform_b=Transaction._make )
+			for transaction in missing:
+				writer.writerow(transaction)
+				old_entries.append(transaction)
+				changed = True
 
 		return changed
 
@@ -423,6 +412,7 @@ class CardDataScraper(ScraperBase):
 			else:
 				sign = ''
 			dataset['signed_amount'] = sign+split_amount[0]
+			dataset['signed_amount'] = dataset['signed_amount'].replace('.', '')
 
 			dataset['added_on'] = datetime.now(timezone.utc).isoformat()
 
