@@ -2,6 +2,10 @@
 from .lexoffice import RestClientUser
 from .utils import CardNumber, symmetric_difference
 import pprint
+import csv
+import io
+import datetime
+import time
 
 def rename(d):
 	mapping={"type": "type_", "financialAccountId": "financial_account_id"}
@@ -131,9 +135,73 @@ class FinancialAccountManager(RestClientUser):
 
 		missing, old = symmetric_difference(transactions, old_transactions, transform_a=transform_a, transform_b=transform_b)
 
-		print("======== NEW TRANSACTIONS =======")
-		pprint.pprint(missing)
+		if len(missing):
+			self.upload_credit_transactions(account, missing)
 
-		print("======== OLD TRANSACTIONS =======")
-		pprint.pprint(old)
+	def upload_credit_transactions(self, account, transactions):
+		## Der Flow ist folgendermaßen:
+		##  File hochladen, id bekommen
+		##  Import-Settings für den Account mit PUT setzen (für *alle* Imports in diesen Account)
+		##  Import anstoßen, Import-ID bekommen
+		##  Import-Ende pollen, Antwort auswerten
 
+		with io.StringIO() as fp:
+			writer = csv.writer(fp, delimiter=";")
+			for transaction in transactions:
+				purpose = transaction.mainDescription.strip()
+				if transaction.additionalDescription.strip():
+					purpose = "{0} / {1}".format(purpose, transaction.additionalDescription.strip())
+
+				writer.writerow( 
+					[account.card_no,
+						transaction.postingDate,
+						transaction.purchaseDate,
+						purpose,
+						"", "",   # Fremdwährung und Kurs
+						transaction.signed_amount]
+				)
+
+				csv_data = fp.getvalue().encode("UTF-8")
+
+		filename = "Kreditkartenumsätze_{0}_{1:%Y-%m-%d_%H-%M-%S}.csv".format(str(account.card_no)[-4:], datetime.datetime.utcnow())
+		response = self.c.upload_csv_data(filename, csv_data)
+
+		if not 'id' in response:
+			raise IOError("Unerwartete Antwort von der Upload-API: {0}".format(pprint.pformat(response)))
+
+		upload_id = response['id']
+
+		## Fixe Import-Settings
+		settings = {
+			"characterSet": "UTF-8",
+			"delimiter": "Semicolon",
+			"quoteCharacter": "DoubleQuote",
+			"negateAmount": False,
+			"fieldMappings": [
+				{"columnIndex": 2, "fieldName": "ValueDate"},
+				{"columnIndex": 3, "fieldName": "Purpose"},
+				{"columnIndex": 6, "fieldName": "Amount"},
+			]
+		}
+		
+		response = self.c.csv_preview(upload_id)
+
+		response = self.c.put_importprofile(account, settings)
+		if not response.get("statusType", "") == "OK":
+			raise IOError("Unerwartete Antwort von der Import-Profil-API: {0}".format(pprint.pformat(response)))
+
+		response = self.c.do_import(account, upload_id, filename)
+		if response.get('status', '') not in ("PENDING", "DONE"):
+			raise IOError("Unerwartete Antwort von der Import-API: {0}".format(pprint.pformat(response)))
+
+		for i in range(10):
+			if response.get('status', '') == "DONE":
+				break
+
+			time.sleep(3)
+			response = self.c.get_importstate(response['financialTransactionImportId'])
+			
+			if response.get('status', '') not in ("PENDING", "DONE"):
+				raise IOError("Unerwartete Abschluss-Antwort von der Import-API: {0}".format(pprint.pformat(response)))
+
+		return response.get('status', '')

@@ -9,6 +9,11 @@ URLS = {
 	'uploadBookkeepingVoucherImage': 'https://{lexofficeInstance}/grld-rest/voucherimageservice/1/v101/uploadBookkeepingVoucherImage/',
 	'financialAccounts': 'https://{lexofficeInstance}/grld-rest/financialaccountservice/v100/financialAccounts',
 	'financialTransactions': 'https://{lexofficeInstance}/grld-rest/financialtransactionservice/v100/financialTransactions',
+	'uploadCsvFile': 'https://{lexofficeInstance}/grld-upload-rest/uploadNtService/v100/uploadCsvFile/',
+	'put_importprofile': 'https://{lexofficeInstance}/grld-rest/importprofileservice/v100/importprofile/financialAccount/{financial_account_id}',
+	'import': 'https://{lexofficeInstance}/grld-rest/financialtransactionimportservice/v100/import',
+	'get_importstate': 'https://{lexofficeInstance}/grld-rest/financialtransactionimportservice/v100/importState/{financial_transaction_import_id}',
+	'csvPreview': 'https://{lexofficeInstance}/grld-rest/financialtransactionimportservice/v100/csvPreview',
 }
 
 USER_AGENT = 'GITHUB_COM_HENRYK_LEXOFFICE_BELEGMAIL/43'
@@ -35,8 +40,10 @@ class RestClient(object):
 			self.session = requests.Session()
 			self.session.headers.update({'User-Agent': USER_AGENT})
 
-	def get_url(self, endpoint):
-		return URLS[endpoint].format(**self.config)
+	def get_url(self, endpoint, **kwargs):
+		values = dict(**self.config)
+		values.update(kwargs)
+		return URLS[endpoint].format(**values)
 
 	def json_api_post(self, endpoint, params):
 		self.ensure_session()
@@ -44,9 +51,15 @@ class RestClient(object):
 		r.raise_for_status()
 		return r.json()
 
-	def json_api_get(self, endpoint, params=None):
+	def json_api_get(self, endpoint, params=None, url_params={}):
 		self.ensure_session()
-		r = self.session.get(self.get_url(endpoint), params=params)
+		r = self.session.get(self.get_url(endpoint, **url_params), params=params)
+		r.raise_for_status()
+		return r.json()
+
+	def json_api_put(self, endpoint, params, url_params={}):
+		self.ensure_session()
+		r = self.session.put(self.get_url(endpoint, **url_params), json=params)
 		r.raise_for_status()
 		return r.json()
 
@@ -75,6 +88,40 @@ class RestClient(object):
 			"uploadType": (None, 'voucher', 'text/plain;charset=ISO-8859-1'),
 		}
 		return self.json_api_multipart('uploadBookkeepingVoucherImage', params)
+
+	def upload_csv_data(self, filename, data, content_type='application/vnd.ms-excel'):
+		params = {
+			"file": (os.path.basename(filename), data, content_type),
+			"uploadType": (None, 'csv', None),
+		}
+		return self.json_api_multipart('uploadCsvFile', params)
+
+	def put_importprofile(self, account, settings):
+		return self.json_api_put('put_importprofile', settings, {'financial_account_id': account.financial_account_id})
+
+	def get_importstate(self, financial_transaction_import_id):
+		return self.json_api_get('get_importstate', url_params={'financial_transaction_import_id': financial_transaction_import_id})
+
+	def csv_preview(self, file_id):
+		params = {
+			"fileId": file_id,
+			"delimiter": "Semicolon",
+			"quoteCharacter": "DoubleQuote",
+			"characterSet": "UTF-8",
+			"negateAmount": False,
+		}
+		return self.json_api_post('csvPreview', params)
+
+	def do_import(self, account, file_id, description):
+		params = {
+			"fileId": file_id,
+			"financialAccount": {
+				"financialAccountId": account.financial_account_id,
+				"name": account.name,
+			},
+			"description": description,
+		}
+		return self.json_api_post('import', params)
 
 	def list_financial_accounts(self):
 		return self.json_api_get('financialAccounts')
