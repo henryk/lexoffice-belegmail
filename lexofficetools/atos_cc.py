@@ -364,11 +364,26 @@ class CardDataScraper(ScraperBase):
 		else:
 			self.submit_form(statement_form, {}, 'bt_STMT')
 
-			form = self.soup.find('form', attrs={'name': 'dispatchForm'})
+			form = self.soup.find('form', attrs={'name': 'statementForm'})
 			if not form:
 				return
-			tabhead = form.find_parent('tr').find_previous_sibling('tr').find_previous_sibling('tr')
-			rows = list(tabhead.find_next_siblings('tr'))
+			
+			current_tr = form.find_parent('tr')
+			found = 0
+			while current_tr:
+				if len(list(current_tr.find_all('td', class_='tabhead'))) == 3:
+					found = found + 1
+				if found == 2:
+					break
+				current_tr = current_tr.find_next_sibling('tr')
+
+			if not current_tr:
+				return
+
+			if not found == 2:
+				return
+
+			rows = list(current_tr.find_next_siblings('tr'))
 
 		i = 0
 		while i < len(rows):
