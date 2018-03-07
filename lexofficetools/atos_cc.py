@@ -398,9 +398,9 @@ class CardDataScraper(ScraperBase):
 			else:
 				dataset['postingDate'] = row_a.find_all('td')[0].string.strip()
 				description = row_a.find_all('td')[1].string
-				if '/' in description:
-					dataset['mainDescription'] = description.rsplit('/', 1)[0].strip()
-					dataset['additionalDescription'] = description.rsplit('/', 1)[1].strip()
+				if ' / ' in description:
+					dataset['mainDescription'] = description.rsplit(' / ', 1)[0].strip()
+					dataset['additionalDescription'] = description.rsplit(' / ', 1)[1].strip()
 				else:
 					dataset['mainDescription'] = description.strip()
 				dataset['amount'] = " ".join( row_a.find_all('td')[2].nobr.string.split() )

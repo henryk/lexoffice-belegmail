@@ -120,9 +120,9 @@ class FinancialAccountManager(RestClientUser):
 			return  (item.purchaseDate, item.signed_amount, item.mainDescription, item.additionalDescription)
 
 		def transform_b(item):
-			if '/' in item['purpose']:
-				description_a = item['purpose'].rsplit('/', 1)[0].strip()
-				description_b = item['purpose'].rsplit('/', 1)[1].strip()
+			if ' / ' in item['purpose']:
+				description_a = item['purpose'].rsplit(' / ', 1)[0].strip()
+				description_b = item['purpose'].rsplit(' / ', 1)[1].strip()
 			else:
 				description_a = item['purpose'].strip()
 				description_b = ''
@@ -158,7 +158,7 @@ class FinancialAccountManager(RestClientUser):
 						transaction.purchaseDate,
 						purpose,
 						"", "",   # Fremdwährung und Kurs
-						transaction.signed_amount]
+						transaction.signed_amount.replace('+','')]
 				)
 
 				csv_data = fp.getvalue().encode("UTF-8")
