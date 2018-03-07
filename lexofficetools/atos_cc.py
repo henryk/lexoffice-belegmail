@@ -13,6 +13,7 @@ import os, os.path
 from bs4 import BeautifulSoup, NavigableString, Comment, Tag
 
 from .utils import CardNumber, LoginError, normalize_date_TTMMJJJJ, symmetric_difference
+from .utils import DOCUMENT_DIRECTORY, CARD_DIRECTORY, CARD_CSV, CARD_STATEMENT_CSV, CARD_STATEMENT_PDF
 
 DBG_counter = None
 def _DBG_out(data):
@@ -26,13 +27,6 @@ TRANSACTION_FIELD_NAMES = ('card_no', 'signed_amount', 'ref', 'rai', 'amount', '
 Transaction = collections.namedtuple('Transaction', TRANSACTION_FIELD_NAMES)
 
 Statement = collections.namedtuple('Statement', ['date', 'form', 'first_access', 'have_csv'])
-
-DOCUMENT_DIRECTORY = "Dokumente"
-CARD_DIRECTORY = "{card_no}"
-CARD_CSV = "{card_no}.csv"
-CARD_STATEMENT_CSV = "{card_no}_{date}_Kreditkartenabrechnung.csv"
-CARD_STATEMENT_PDF = "{card_no}_{date}_Kreditkartenabrechnung.pdf"
-
 
 CREDIT_ENTRY_URLS = {
 	## Some via http://ipv4info.com/domains-in-block/s98ddec/89.106.184.0-89.106.191.255.html
@@ -343,6 +337,19 @@ class CardDataScraper(ScraperBase):
 
 		return changed
 
+	def synchronize_statements(self, rest_client):
+		os.makedirs(os.path.join(DOCUMENT_DIRECTORY, CARD_DIRECTORY).format(card_no=self.card_no), exist_ok=True)
+
+		for statement in self.get_statement_links():
+			pdf_name = os.path.join(DOCUMENT_DIRECTORY, CARD_DIRECTORY, CARD_STATEMENT_PDF).format(card_no=self.card_no, date=statement.date)
+
+			if not os.path.exists(pdf_name):
+				pdf_content = self.fetch_statement_pdf(statement)
+				rest_client.upload_image(os.path.basename(pdf_name), pdf_content, 'application/pdf')
+				with open(pdf_name, "wb") as fp:
+					fp.write(pdf_content)
+
+
 	def get_transactions(self, statement_form=None):
 		if statement_form is None:
 			self.navigate_bt('TXN')
@@ -460,6 +467,17 @@ class CardDataScraper(ScraperBase):
 
 				with open(csv_name, 'w') as fp:
 					fp.write(CSV_RESPONSE.text)
+
+	def fetch_statement_pdf(self, statement):
+		self.submit_form(statement.form, {}, 'bt_STMT')
+
+		form = self.soup.find('input', attrs={'name': 'bt_STMTSAVE'}).find_parent('form')
+		self.submit_form(form, {}, 'bt_STMTSAVE')
+
+		for a in self.soup.find_all('a'):
+			if 'bt_STMTPDF' in a.get('href', ''):
+				PDF_RESPONSE = self.session.get( self.resolve_url(a['href']) )
+				return PDF_RESPONSE.content
 
 
 def last_submit(request_data, form):

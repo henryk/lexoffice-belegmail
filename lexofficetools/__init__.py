@@ -72,7 +72,9 @@ def main():
 						if account is not None:
 							account.update(card_no=c.card_no)
 
+						c.synchronize_statements(f.c)
 						c.synchronize_csv()
+
 
 				for account in f.all_accounts():
 					if account.type_ == 'creditcard' and account.card_no is not None:

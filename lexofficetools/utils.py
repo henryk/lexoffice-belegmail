@@ -2,6 +2,12 @@ import re
 import datetime
 import collections
 
+DOCUMENT_DIRECTORY = "Dokumente"
+CARD_DIRECTORY = "{card_no}"
+CARD_CSV = "{card_no}.csv"
+CARD_STATEMENT_CSV = "{card_no}_{date}_Kreditkartenabrechnung.csv"
+CARD_STATEMENT_PDF = "{card_no}_{date}_Kreditkartenabrechnung.pdf"
+
 def normalize_date_TTMMJJJJ(data):
 	data = "".join(data.split())
 	if not data:
