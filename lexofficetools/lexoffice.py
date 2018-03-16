@@ -1,6 +1,7 @@
 import requests
 import json
 import os.path
+import time
 
 URLS = {
 	'login': 'https://{lexofficeInstance}/grld-public/login/authorize',
@@ -22,12 +23,19 @@ class RestClientUser(object):
 	def __init__(self, configuration):
 		self.c = None
 		self.config = configuration
+		self._last_login = None
 
 	def ensure_login(self):
 		# FIXME Better logic
-		if not self.c:
+		if not self.c or not self._last_login:
 			self.c = RestClient(self.config)
 			self.c.login()
+			self._last_login = time.time()
+		else:
+			delta = time.time() - self._last_login
+			if delta < 0 or delta > 60*60:
+				## Assume a re-login is necessary after 60 minutes
+				self.c.login()
 
 
 class RestClient(object):
