@@ -175,6 +175,9 @@ class ScraperBase(object):
 		else:
 			form = self.soup.body.find('form', attrs=form_attrs)
 
+		if not form:
+			raise Exception("No form found")
+
 		action = self.resolve_url(form['action'])
 		request_data = {}
 
