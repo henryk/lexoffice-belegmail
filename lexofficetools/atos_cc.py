@@ -521,7 +521,7 @@ def authid_pin_filler(config):
 		raise KeyError('Not matched')
 	return callback
 
-def select_first_option(request_data, form):
+def select_last_option(request_data, form):
 	for select in form.find_all('select'):
 		option = None
 		for option in select.find_all('option'):
@@ -550,9 +550,22 @@ class SparkasseCreditLogin(ScraperBase, LoggedInMixin):
 			self.clear_session()
 
 	def cc_sso(self):
-		# Simple way: Select and choose the first form with select field, choose last credit card
-		form = self.soup.body.find('select').find_parent('form')
-		self.submit_form(form, {}, None, [select_first_option, last_submit])
+		# Case distinction: If there's only one card, it is automatically selected
+		#  If there's two cards, a selection needs to be made:
+		#  Simple way: Select and choose the first form with select field, choose last credit card
+
+		credit_form = self.soup.body.find('select').find_parent('form')
+
+		have_a_href = False
+		for a in credit_form.find_all('a'):
+			if '/sso' in a['href']:
+				# Variant 1
+				have_a_href = True
+				break
+
+		if not have_a_href:
+			# Variant 2
+			self.submit_form(credit_form, {}, None, [select_last_option, last_submit])
 
 		return SparkasseCreditScraper(self.config, self)
 
