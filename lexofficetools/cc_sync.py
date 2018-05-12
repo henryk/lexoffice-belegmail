@@ -6,6 +6,7 @@ import csv
 import io
 import datetime
 import time
+import html
 
 def rename(d):
 	mapping={"type": "type_", "financialAccountId": "financial_account_id"}
@@ -120,6 +121,7 @@ class FinancialAccountManager(RestClientUser):
 			return  (item.purchaseDate, item.signed_amount, item.mainDescription, item.additionalDescription)
 
 		def transform_b(item):
+			item['purpose'] = html.unescape(item['purpose'])
 			if ' / ' in item['purpose']:
 				description_a = item['purpose'].rsplit(' / ', 1)[0].strip()
 				description_b = item['purpose'].rsplit(' / ', 1)[1].strip()
