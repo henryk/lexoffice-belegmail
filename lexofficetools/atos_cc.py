@@ -348,9 +348,11 @@ class CardDataScraper(ScraperBase):
 
 			if not os.path.exists(pdf_name):
 				pdf_content = self.fetch_statement_pdf(statement)
-				rest_client.upload_image(os.path.basename(pdf_name), pdf_content, 'application/pdf')
-				with open(pdf_name, "wb") as fp:
-					fp.write(pdf_content)
+
+				if pdf_content:
+					rest_client.upload_image(os.path.basename(pdf_name), pdf_content, 'application/pdf')
+					with open(pdf_name, "wb") as fp:
+						fp.write(pdf_content)
 
 
 	def get_transactions(self, statement_form=None):
@@ -496,6 +498,12 @@ class CardDataScraper(ScraperBase):
 			if 'bt_STMTPDF' in a.get('href', ''):
 				PDF_RESPONSE = self.session.get( self.resolve_url(a['href']) )
 				return PDF_RESPONSE.content
+
+		for elem in self.soup.find_all('font', attrs={'color': 'red'}):
+			# Statement will be ready next business day
+			return None
+
+		raise Exception("Kein PDF-Download gefunden")
 
 
 def last_submit(request_data, form):
